@@ -1,1 +1,0 @@
-gcc screent.c -L/usr/X11/lib -lX11 -g

@@ -1,23 +1,56 @@
 #include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <X11/Xlib.h>
 #include <X11/Xmu/WinUtil.h>
+#include <X11/extensions/scrnsaver.h>
 
+
+#define INACTIVE 180000 	// 3 minutes
 
 Bool xerror = False;
 
-char* getFocusedWindowClass(Display* d, Window w);
-char* onActiveWindowChange(Display* d, Window w, FILE* f);
-void onUserActivity();
-void onUserInactivity(FILE* f);
-void writeActivityToFile(FILE* f);
+static char*  application;
+static time_t active_start, active_stop;
+static Bool   clock_on = False;
 
-static char* application;
-static time_t	active_start, active_stop, 
-		inactive_start;
 
-static Bool clock_on = False;
+char* getFocusedWindowClass( Display* d, Window w ); 
+
+
+void writeActivityToFile(char* fname)
+{
+	FILE *f = fopen(fname, "a");
+	fprintf(f, "%s %ld\n", application, active_stop - active_start);
+	fclose(f);
+}
+
+
+void onUserActivity() 
+{
+	if (!clock_on) {
+		clock_on = True;
+		active_start = time(NULL);
+	}
+}
+
+
+void onUserInactivity(char* fname) 
+{
+	active_stop = time(NULL);
+	writeActivityToFile(fname);
+}
+
+
+char* onActiveWindowChange(Display* d, Window w, char* fname)
+{
+	active_stop = time(NULL);
+	writeActivityToFile(fname);
+	return getFocusedWindowClass(d, w);
+
+}
+
 
 
 int main( int argc, char *argv[] ) 
@@ -26,48 +59,34 @@ int main( int argc, char *argv[] )
 		printf("Need a db\n");
 		return -1;
 	}
-	FILE *fpt = fopen(argv[1], "a");
+		
+	Display 		*display;
+	Window   		 window;
+	XEvent   		 event;
 
-	
-
-	Display *display;
-	Window window;
-	XEvent event;
-	
-
-	display = XOpenDisplay(NULL);
-	application = getFocusedWindowClass(display, window);
-	inactive_start = active_start = time(NULL);
-	
+	display = 		 XOpenDisplay(NULL);
+	XScreenSaverInfo *info = XScreenSaverAllocInfo();
+	application = 		 getFocusedWindowClass(display, window);
+	clock_on = 		 True;
+	active_start = 		 time(NULL);
 	
 	// start event loop
 	while (1) {
-		XNextEvent(display, &event);
-
-		if (event.type == KeyPress || 
-		    event.type == KeyRelease ||
-		    event.type == MotionNotify ) 
-		{
-			// if user focuses on another application
-			if (application != getFocusedWindowClass(display, window)) {
-				application = onActiveWindowChange(display, window, fpt);
-				active_start = time(NULL);
-			}
-			onUserActivity();
-
+		XScreenSaverQueryInfo(display, DefaultRootWindow(display), info);
+		
+		// if user focuses on another application
+		if (strcmp(application, getFocusedWindowClass(display, window)) != 0) {
+			application = onActiveWindowChange(display, window, argv[1]);
+			active_start = time(NULL);
 		}
-		//
-		if (time(NULL)-inactive_start >= 30) {
-			onUserInactivity(fpt);
-			printf("INACTIVE!");
+		if (info->idle >= INACTIVE && clock_on == True) { /// if idle for >= INACTIVE milliseconds
+			onUserInactivity(argv[1]);
+			clock_on = False;
+		} else if (info->idle < INACTIVE && clock_on == False) {
+			onUserActivity();
 		}
 	}
-	/*
-	window = GetFocusedWindowClass(display);
-	printf("%s\n", GetWindowClass(display, window));
-	*/
 }
-
 
 
 char* getFocusedWindowClass( Display* d, Window w ) 
@@ -83,7 +102,7 @@ char* getFocusedWindowClass( Display* d, Window w )
 		exit(-1);
 	}
 
-	// return Class name
+	// return window class
 	class = XAllocClassHint();
 	stat = XGetClassHint(d, w, class);
 	
@@ -92,37 +111,3 @@ char* getFocusedWindowClass( Display* d, Window w )
 		return "spotify";
 	return class->res_name;
 }
-
-
-
-void onUserActivity() 
-{
-	if (!clock_on) {
-		clock_on = True;
-		active_start = time(NULL);
-	}
-	inactive_start = time(NULL);
-}
-
-
-void onUserInactivity(FILE* f) 
-{
-	clock_on = False;
-	active_stop = time(NULL);
-	writeActivityToFile(f);
-}
-
-char* onActiveWindowChange(Display* d, Window w, FILE* f)
-{
-	writeActivityToFile(f);
-	return getFocusedWindowClass(d, w);
-
-}
-
-void writeActivityToFile(FILE* f)
-{
-	printf("Writing!\n");
-	// char* data = (char*)malloc(sizeof(char)*50);
-	fprintf(f, "%s %s", application, (char) active_stop - active_start);
-}
-
